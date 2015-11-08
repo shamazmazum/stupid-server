@@ -6,4 +6,6 @@
            #:set-uri-handler
            #:make-static-file-generator
            #:make-page-from-stream-generator
-           #:define-page-from-stream-handler))
+           #:make-post-request-handler
+           #:define-page-from-stream-handler
+           #:define-post-request-handler))

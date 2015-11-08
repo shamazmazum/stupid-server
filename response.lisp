@@ -106,7 +106,7 @@
        "application/pdf")
       (t "application/octet-stream"))))
 
-(defun make-static-file-generator (filename &optional (charset "utf-8"))
+(defun make-static-file-generator (filename &key (charset "utf-8"))
   "Static file handler (for example .html file / image on disk)"
   (let ((content (load-content filename))
         (response (make-response)))
@@ -124,7 +124,7 @@
       (declare (ignore request))
       response)))
 
-(defun make-page-from-stream-generator (filler &optional
+(defun make-page-from-stream-generator (filler &key
                                                  (charset "utf-8")
                                                  (code *http-ok*))
   "Dynamic page handler. FILLER must be a function with 2 arguments:
@@ -139,6 +139,15 @@ STREAM and REQUEST. It must write to the stream content of html page"
       (push (cons "Content-Type"
                   (construct-content-type (list "text/html" :charset charset)))
             (response-headers response))
+      response)))
+
+(defun make-post-request-handler (function &key location (code *http-found*))
+  (let ((response (make-response)))
+    (if location (push (cons "Location" location) (response-headers response)))
+    (lambda (request)
+      (let ((new-code (funcall function request)))
+        (setf (response-code response)
+              (if new-code new-code code)))
       response)))
 
 (defun process-request (request)
@@ -197,3 +206,23 @@ variable UA will be bound with client's UA and NAME with \"value\""
                                   ,@body))
                               (cons `(declare (ignore ,request))
                                     body)))))))
+
+
+(defmacro define-post-request-handler (uri location param-list &body body)
+  (let* ((request (gensym))
+         (param-bindings (loop for param in param-list collect
+                              (destructuring-bind (name pname type) param
+                                (ecase type
+                                  (:header
+                                   `(,name (cdr (assoc ,pname (request-headers ,request) :test #'string=))))
+                                  (:parameter
+                                   `(,name (cdr (assoc ,pname (request-parameters ,request) :test #'string=)))))))))
+    `(set-uri-handler ,uri
+                      (make-post-request-handler
+                       (lambda (,request)
+                         ,@(if param-bindings
+                               `((let ,param-bindings
+                                   ,@body))
+                               (cons `(declare (ignore ,request))
+                                     body)))
+                       :location ,location))))
