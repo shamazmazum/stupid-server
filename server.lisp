@@ -6,7 +6,9 @@
       ((warning #'(lambda (c) (declare (ignore c)) (invoke-restart 'muffle-warning))))
     (remove-fd-handlers *event-base*
                         (socket-os-fd socket)))
-  (close socket))
+  (handler-case
+      (close socket)
+    (isys:econnreset () ())))
 
 (defun send-response (socket buffer)
   "Send a response to client"
@@ -14,10 +16,9 @@
     (flet ((send-handler (fd event error)
              (declare (ignore fd event))
              (if (eql :timeout error)
-                 (cerror "Continue work"
-                         'timeout-error
-                         :socket socket
-                         :message (format nil "socket ~a timed out" socket)))
+                 (error 'timeout-error
+                        :socket socket
+                        :message (format nil "socket ~a timed out" socket)))
              (incf position (send-to socket buffer
                                      :start position))
              (when (= position (length buffer))
@@ -27,6 +28,20 @@
                       (socket-os-fd socket)
                       :write #'send-handler
                       :timeout 10))))
+
+(defun safely-receive (socket buffer &key start)
+  (handler-case
+      (multiple-value-bind (buffer copied)
+          (receive-from socket :buffer buffer :start start)
+        (declare (ignore buffer))
+        copied)
+    ((or end-of-file
+      isys:ewouldblock ; XXX
+      #+sbcl
+      sb-kernel:index-too-large-error) ()
+      (error 'server-error
+             :message "Cannot read from socket"
+             :socket socket))))
 
 (defun read-request (socket)
   "Read request from client and send response"
@@ -40,84 +55,67 @@
         request)
     (flet ((request-handler (fd event error)
              (declare (ignore fd event))
-             (if (eql error :timeout)
-                 (cerror "Continue work"
-                         'timeout-error
-                         :socket socket
-                         :message (format nil "socket ~a timed out" socket)))
+             (with-simple-restart (continue-event-handler "Continue handler")
+               (if (eql error :timeout)
+                   (error 'timeout-error
+                          :socket socket
+                          :message (format nil "socket ~a timed out" socket)))
 
-             (when reading-headers
-               (handler-case
-                   (multiple-value-bind (buffer copied)
-                       (receive-from socket :buffer buffer :start position)
-                     (declare (ignore buffer))
-                     (incf position copied))
-                 ((or end-of-file
-                   #+sbcl
-                   sb-kernel:index-too-large-error) ()
-                   (disconnect-socket socket)))
-
-               (let ((content-position (search #(13 10 13 10) buffer)))
-                 (when content-position
-                   (setq request (parse-request
-                                  (octets-to-string-latin-1
-                                   (subseq buffer 0 (+ content-position 4))
-                                   #+nil
-                                   buffer))
-                         reading-headers nil)
-                   (when (string= (request-method request) *method-post*)
-                     (let ((length (assoc "Content-Length" (request-headers request)
-                                          :test #'string=)))
-                       (if (not length)
-                           (cerror "Continue work"
-                                   'request-error
-                                   :message "No Content-Length"
-                                   :socket socket))
-                       (setq reading-content t
-                             content-length (parse-integer (cdr length))
-                             content-start (+ 4 content-position)))))))
-
-             (when reading-content
-               (cond
-                 ((= position (+ content-start content-length))
-                  (setf (request-content request)
-                        (subseq buffer content-start position)
-                        reading-content nil))
-                 (t
-                  (handler-case
-                      (multiple-value-bind (buffer copied)
-                          (receive-from socket :buffer buffer :start position)
-                        (declare (ignore buffer))
-                        (incf position copied))
-                    ((or end-of-file
-                      #+sbcl
-                      sb-kernel:index-too-large-error) ()
-                      (disconnect-socket socket))))))
-
-             (when (not
-                    (or reading-headers reading-content))
-               (remove-fd-handlers *event-base*
-                                   (socket-os-fd socket))
-               (if *log-stream*
-                   (format *log-stream* "Requested ~a by '~a'~%"
-                           (request-uri request)
-                           (let ((ua (assoc "User-Agent" (request-headers request)
+               (when reading-headers
+                 (incf position (safely-receive socket buffer :start position))
+                 (let ((content-position (search #(13 10 13 10) buffer)))
+                   (when content-position
+                     (setq request (parse-request
+                                    (octets-to-string-latin-1
+                                     (subseq buffer 0 (+ content-position 4))
+                                     #+nil
+                                     buffer)
+                                    :socket socket)
+                           reading-headers nil)
+                     (when (string= (request-method request) *method-post*)
+                       (let ((length (assoc "Content-Length" (request-headers request)
                                             :test #'string=)))
-                             (if ua (cdr ua)))))
-               (if (and
-                    (request-content request)
-                    (let ((content-type (assoc "Content-Type" (request-headers request)
-                                               :test #'string=)))
-                      (if content-type
-                          (string= "application/x-www-form-urlencoded"
-                                   (first (parse-content-type (cdr content-type)))))))
-                   (setf (request-parameters request)
-                         (parse-post-parameters
-                          (octets-to-string-latin-1 (request-content request)))))
-               (send-response
-                socket
-                (compose-response
-                 (process-request request))))))
+                         (if (not length)
+                             (error 'request-error
+                                    :message "No Content-Length"
+                                    :socket socket))
+                         (setq reading-content t
+                               content-length (parse-integer (cdr length))
+                               content-start (+ 4 content-position)))))))
+
+               (when reading-content
+                 (cond
+                   ((= position (+ content-start content-length))
+                    (setf (request-content request)
+                          (subseq buffer content-start position)
+                          reading-content nil))
+                   (t (incf position (safely-receive socket buffer :start position)))))
+
+               (when (not
+                      (or reading-headers reading-content))
+                 (remove-fd-handlers *event-base*
+                                     (socket-os-fd socket))
+                 (if *log-stream*
+                     (format *log-stream* "Requested ~a by '~a'~%"
+                             (request-uri request)
+                             (let ((ua (assoc "User-Agent" (request-headers request)
+                                              :test #'string=)))
+                               (if ua (cdr ua)))))
+                 (if (and
+                      (request-content request)
+                      (let ((content-type (assoc "Content-Type" (request-headers request)
+                                                 :test #'string=)))
+                        (if content-type
+                            (string= "application/x-www-form-urlencoded"
+                                     (first (parse-content-type (cdr content-type)))))))
+                     (setf (request-parameters request)
+                           (parse-post-parameters
+                            (octets-to-string-latin-1 (request-content request)))))
+
+                 (send-response
+                  socket
+                  (compose-response
+                   (process-request request)))))))
       (set-io-handler *event-base*
                       (socket-os-fd socket)
                       :read #'request-handler
@@ -166,8 +164,11 @@
                                      (type-of c)
                                      (if (slot-boundp c 'message)
                                          (error-message c) "")))
-                         (disconnect-socket socket))
-                       (continue))))
+                         (continue) ; If we can just continue, do it
+                         (disconnect-socket socket) ; Otherwise try to close socket and exit event-handler normally
+                         (if (find-restart 'continue-event-handler)
+                             (invoke-restart 'continue-event-handler))))))
+
                  (loop
                     while *server-thread*
                     do
