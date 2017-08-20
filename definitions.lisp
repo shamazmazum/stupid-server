@@ -22,11 +22,11 @@
 (defvar *dispatch-table* nil
   "Server URI-handler dispatch table")
 
-(define-condition server-error ()
+(define-condition stupid-server::server-error ()
   ((message :initarg :message
-            :reader error-message)
+            :reader stupid-server::error-message)
    (socket :initarg :socket
-           :reader error-socket))
+           :reader stupid-server::error-socket))
   (:report (lambda (c s)
              (format s "Unhandeled server error: ~a"
                      (error-message c)))))

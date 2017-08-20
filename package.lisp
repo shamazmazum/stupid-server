@@ -1,5 +1,6 @@
 (defpackage stupid-server
   (:use #:cl #:cl-who #:bt #:iomux #:sockets)
+  (:shadow #:server-error #:error-message #:error-socket)
   (:export #:run-server
            #:stop-server
            #:*dispatch-table*
