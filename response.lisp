@@ -150,6 +150,9 @@ STREAM and REQUEST. It must write to the stream content of html page"
               (if new-code new-code code)))
       response)))
 
+(defun com-funcall (x y)
+  (funcall y x))
+
 (defun process-request (request)
   "Generate a response accepting a REQUEST"
   (let ((response
@@ -157,8 +160,8 @@ STREAM and REQUEST. It must write to the stream content of html page"
            ((or
              (string= *method-get* (request-method request))
              (string= *method-post* (request-method request))) ;We can understand only this now
-            (let ((generator (assoc (request-uri request) *dispatch-table*
-                                    :test #'string=)))
+            (let ((generator (find (request-uri request) *dispatch-table*
+                                    :test #'com-funcall :key #'car)))
               (setq generator (if generator (cdr generator)
                                   (get-status-code-page-generator *http-not-found*)))
               (funcall generator request)))
@@ -174,11 +177,23 @@ STREAM and REQUEST. It must write to the stream content of html page"
             (response-update-needed response) nil))
     response))
 
-(defun set-uri-handler (uri handler)
+(defun set-uri-handler (uri handler &key (remove-old t))
   "Set URI handler possibly deleting the old one"
-  (let* ((entry (assoc uri *dispatch-table* :test #'string=))
-         (dispatch-table (remove entry *dispatch-table*)))
-    (setq *dispatch-table* (cons (cons uri handler) dispatch-table))))
+  (let ((dispatch-table
+         (if remove-old
+             (let ((entry (find uri *dispatch-table* :test #'com-funcall :key #'car)))
+               (remove entry *dispatch-table*))
+             *dispatch-table*)))
+
+    (setq *dispatch-table*
+          (cons
+           (typecase uri
+             (string
+              (cons (lambda (str) (string= str uri)) handler))
+             (function
+              (cons uri handler))
+             (t (error "URI must be of type string or function")))
+           dispatch-table))))
 
 (defmacro define-page-from-stream-handler ((uri stream) param-list &body body)
   "Create and set dynamic page handler. URI is an URI in the dispatch table.
