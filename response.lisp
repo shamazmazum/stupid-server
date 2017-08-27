@@ -26,11 +26,14 @@
   code
   headers
   data
-  (update-needed t))
+  cache)
 
 (defun compose-response (response)
   "Translate response to simple-vector"
   (declare (optimize (speed 3)))
+  (if (response-cache response)
+      (return-from compose-response
+        (response-cache response)))
   (let ((newline (coerce #(#\Return #\LineFeed) 'string))
         (newline-code #(13 10)))
     (declare (dynamic-extent newline newline-code))
@@ -42,14 +45,15 @@
                   (car header) (cdr header)
                   newline))
          response-list))
-      (apply #'concatenate 'vector
-             (string-to-octets-latin-1
-              (format nil "~a ~3,'0d ~a~a"
-                      (response-version response)
-                      (car (response-code response))
-                      (cdr (response-code response))
-                      newline))
-             response-list))))
+      (setf (response-cache response)
+            (apply #'concatenate 'vector
+                   (string-to-octets-latin-1
+                    (format nil "~a ~3,'0d ~a~a"
+                            (response-version response)
+                            (car (response-code response))
+                            (cdr (response-code response))
+                            newline))
+                   response-list)))))
 
 ;; Some response generators
 
@@ -167,13 +171,12 @@ STREAM and REQUEST. It must write to the stream content of html page"
              (get-status-code-page-generator *http-not-implemented*)))
           request)))
 
-    (when (response-update-needed response)
+    (when (not (response-cache response))
       (if (response-data response)
           (push (cons "Content-Length" (length (response-data response)))
                 (response-headers response)))
       (push '("Connection" . "close") (response-headers response))
-      (setf (response-version response) (request-version request)
-            (response-update-needed response) nil))
+      (setf (response-version response) (request-version request)))
     response))
 
 (defun set-uri-handler (uri handler &key (remove-old t))
