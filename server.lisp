@@ -8,6 +8,7 @@
                         (socket-os-fd socket)))
   (handler-case
       (close socket)
+    ;; Silently ignore RST
     (isys:econnreset () ())))
 
 (defun send-response (socket buffer)
@@ -16,9 +17,7 @@
     (flet ((send-handler (fd event error)
              (declare (ignore fd event))
              (if (eql :timeout error)
-                 (error 'timeout-error
-                        :socket socket
-                        :message (format nil "socket ~a timed out" socket)))
+                 (server-error socket "socket ~a timed out" socket))
              (incf position (send-to socket buffer
                                      :start position))
              (when (= position (length buffer))
@@ -29,19 +28,16 @@
                       :write #'send-handler
                       :timeout 10))))
 
-(defun safely-receive (socket buffer &key start)
-  (handler-case
-      (multiple-value-bind (buffer copied)
-          (receive-from socket :buffer buffer :start start)
-        (declare (ignore buffer))
-        copied)
-    ((or end-of-file
-      isys:ewouldblock ; XXX
-      #+sbcl
-      sb-kernel:index-too-large-error) ()
-      (error 'server-error
-             :message "Cannot read from socket"
-             :socket socket))))
+(defun socket-receive (socket buffer &key start)
+  (multiple-value-bind (buffer copied)
+      (receive-from socket :buffer buffer :start start)
+    (declare (ignore buffer))
+    copied))
+
+(defmacro with-close-socket-restart ((socket) &body body)
+  `(restart-case
+       (progn ,@body)
+     (server-close-socket () (disconnect-socket ,socket))))
 
 (defun read-request (socket)
   "Read request from client and send response"
@@ -55,14 +51,12 @@
         request)
     (flet ((request-handler (fd event error)
              (declare (ignore fd event))
-             (with-simple-restart (continue-event-handler "Continue handler")
+             (with-close-socket-restart (socket)
                (if (eql error :timeout)
-                   (error 'timeout-error
-                          :socket socket
-                          :message (format nil "socket ~a timed out" socket)))
+                   (server-error socket "socket ~a timed out" socket))
 
                (when reading-headers
-                 (incf position (safely-receive socket buffer :start position))
+                 (incf position (socket-receive socket buffer :start position))
                  (let ((content-position (search #(13 10 13 10) buffer)))
                    (when content-position
                      (setq request (parse-request
@@ -76,9 +70,7 @@
                        (let ((length (assoc "Content-Length" (request-headers request)
                                             :test #'string=)))
                          (if (not length)
-                             (error 'request-error
-                                    :message "No Content-Length"
-                                    :socket socket))
+                             (server-error socket "No Content-Length"))
                          (setq reading-content t
                                content-length (parse-integer (cdr length))
                                content-start (+ 4 content-position)))))))
@@ -89,7 +81,7 @@
                     (setf (request-content request)
                           (subseq buffer content-start position)
                           reading-content nil))
-                   (t (incf position (safely-receive socket buffer :start position)))))
+                   (t (incf position (socket-receive socket buffer :start position)))))
 
                (when (not
                       (or reading-headers reading-content))
@@ -116,12 +108,25 @@
                   socket
                   (compose-response
                    (process-request request)))))))
+
       (set-io-handler *event-base*
                       (socket-os-fd socket)
                       :read #'request-handler
                       :timeout 10))))
 
 ;; Server operation
+
+(defun log-error (c)
+  "Log error if possible"
+  (when *log-stream*
+    (princ c *log-stream*)
+    (terpri *log-stream*)))
+
+(defun server-handle-error ()
+  (if (find-restart 'server-close-socket)
+      (invoke-restart 'server-close-socket))
+  (if (find-restart 'server-continue)
+      (invoke-restart 'server-continue)))
 
 (defun run-server (&optional log-stream)
   "Run server. LOG-STREAM may be optional character output stream where log is stored"
@@ -156,19 +161,10 @@
                                :timeout 15))
              (let ((*log-stream* log-stream))
                (handler-bind
-                   ((server-error
+                   ((error
                      (lambda (c)
-                       (let ((socket (error-socket c)))
-                         (if *log-stream*
-                             (format *log-stream* "~a: ~a~%"
-                                     (type-of c)
-                                     (if (slot-boundp c 'message)
-                                         (error-message c) "")))
-                         (continue) ; If we can just continue, do it
-                         (disconnect-socket socket) ; Otherwise try to close socket and exit event-handler normally
-                         (if (find-restart 'continue-event-handler)
-                             (invoke-restart 'continue-event-handler))))))
-
+                       (log-error c)
+                       (or (server-handle-error) (continue))))) ; If we can just continue, do it
                  (loop
                     while *server-thread*
                     do

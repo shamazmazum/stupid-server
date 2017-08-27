@@ -11,33 +11,27 @@
 
 (defun parse-content-type (type)
   "Parse any HTTP header value (but used here to parse Content-Type)"
-  (handler-case
-      (destructuring-bind (toplevel/subtype &optional parameter)
-          (split-string type #\;)
-        (if parameter
-            (destructuring-bind (name value)
-                (split-string parameter #\=)
-              (list toplevel/subtype (intern (string-left-trim '(#\Space) (string-upcase name))
-                                             (find-package :keyword)) value))
-            (list toplevel/subtype)))
-    (error () (list type))))
+  (declare (optimize (speed 3)))
+  (destructuring-bind (toplevel/subtype &optional parameter)
+      (split-string type #\;)
+    (if parameter
+        (destructuring-bind (name value)
+            (split-string parameter #\=)
+          (list toplevel/subtype (intern (string-left-trim '(#\Space) (string-upcase name))
+                                         (find-package :keyword)) value))
+        (list toplevel/subtype))))
 
 (defun parse-post-parameters (string)
+  (declare (optimize (speed 3)))
   "Parse url-encoded (Content-Type: application/x-www-form-urlencoded) POST data"
-  (let (result)
-    (loop
-       for line in (split-string string #\NewLine)
-       do
-         (loop for parameter in (split-string line #\&) do
-              (let ((name-value (split-string parameter #\=)))
-                (handler-case
-                    (destructuring-bind (name value) name-value
-                      (push (cons name (url-decode value)) result))
-                  (error () (cerror "Continue work" 'request-error
-                                    :message "Cannot parse POST data"))))))
-    result))
+  (let ((parameters (remove #\NewLine string)))
+    (loop for parameter in (split-string parameters #\&) collect
+              (destructuring-bind (name value)
+                  (split-string parameter #\=)
+                (cons name (url-decode value))))))
 
 (defun parse-get-parameters (uri)
+  (declare (optimize (speed 3)))
   "Extract get parameters from URI"
   (destructuring-bind (uri &optional get-data)
       (split-string uri #\?)
@@ -55,35 +49,26 @@
   (let ((request-strings (split-string string #\NewLine))
         (request (make-request :socket socket)))
 
-    (handler-case
-        (let ((start (car request-strings)))
-          (destructuring-bind (method uri version)
-              (split-string start)
-            (setf (request-method request) method
-                  (request-uri request) (url-decode uri)
-                  (request-version request) version)))
-      (error () (error 'request-error
-                       :message "fatal: cannot parse request"
-                       :socket socket))) ; Resignal error as parse error
+    (let ((start (car request-strings)))
+      (destructuring-bind (method uri version)
+          (split-string start)
+        (setf (request-method request) method
+              (request-uri request) (url-decode uri)
+              (request-version request) version)))
 
     (if (string= *method-get* (request-method request))
-        (handler-case
-            (multiple-value-bind (uri parameters)
-                (parse-get-parameters (request-uri request))
-              (setf (request-uri request) uri
-                    (request-parameters request) parameters))
-          (error () ())))
+        (multiple-value-bind (uri parameters)
+            (parse-get-parameters (request-uri request))
+          (setf (request-uri request) uri
+                (request-parameters request) parameters)))
 
-    (loop
-       for header in (cdr request-strings)
-       until (string= "" header)
-       do
-         (handler-case
-             (let ((position (position #\: header)))
-               (push
-                (cons (subseq header 0 position)
-                      (subseq header (+ position 2)))
-                (request-headers request)))
-           (error () (cerror "Continue work" 'request-error
-                             :message "Cannot parse HTTP header"))))
+    (setf (request-headers request)
+          (loop
+             for header in (cdr request-strings)
+             until (string= "" header)
+             collect
+               (let ((position (position #\: header)))
+                 (cons (subseq header 0 position)
+                       (subseq header (+ position 2))))))
+
     request))

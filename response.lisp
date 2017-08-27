@@ -34,24 +34,22 @@
   (let ((newline (coerce #(#\Return #\LineFeed) 'string))
         (newline-code #(13 10)))
     (declare (dynamic-extent newline newline-code))
-    (flet ((string-to-octets-latin-1 (string)
-             (map 'vector #'char-code string)))
-      (let ((response-list (list newline-code (response-data response))))
-        (dolist (header (response-headers response))
-          (push
-           (string-to-octets-latin-1
-            (format nil "~a: ~a~a"
-                    (car header) (cdr header)
-                    newline))
-           response-list))
-        (apply #'concatenate 'vector
-               (string-to-octets-latin-1
-                (format nil "~a ~3,'0d ~a~a"
-                        (response-version response)
-                        (car (response-code response))
-                        (cdr (response-code response))
-                        newline))
-               response-list)))))
+    (let ((response-list (list newline-code (response-data response))))
+      (dolist (header (response-headers response))
+        (push
+         (string-to-octets-latin-1
+          (format nil "~a: ~a~a"
+                  (car header) (cdr header)
+                  newline))
+         response-list))
+      (apply #'concatenate 'vector
+             (string-to-octets-latin-1
+              (format nil "~a ~3,'0d ~a~a"
+                      (response-version response)
+                      (car (response-code response))
+                      (cdr (response-code response))
+                      newline))
+             response-list))))
 
 ;; Some response generators
 
@@ -156,17 +154,18 @@ STREAM and REQUEST. It must write to the stream content of html page"
 (defun process-request (request)
   "Generate a response accepting a REQUEST"
   (let ((response
-         (cond
-           ((or
-             (string= *method-get* (request-method request))
-             (string= *method-post* (request-method request))) ;We can understand only this now
-            (let ((generator (find (request-uri request) *dispatch-table*
+         (funcall
+          (cond
+            ((or
+              (string= *method-get* (request-method request))
+              (string= *method-post* (request-method request))) ;We can understand only this now
+             (let ((generator (find (request-uri request) *dispatch-table*
                                     :test #'com-funcall :key #'car)))
-              (setq generator (if generator (cdr generator)
-                                  (get-status-code-page-generator *http-not-found*)))
-              (funcall generator request)))
-           (t
-            (funcall (get-status-code-page-generator *http-not-implemented*) request)))))
+               (if generator (cdr generator)
+                   (get-status-code-page-generator *http-not-found*))))
+            (t
+             (get-status-code-page-generator *http-not-implemented*)))
+          request)))
 
     (when (response-update-needed response)
       (if (response-data response)
