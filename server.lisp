@@ -11,18 +11,24 @@
     ;; Silently ignore RST
     (isys:econnreset () ())))
 
+(defmacro with-close-socket-restart ((socket) &body body)
+  `(restart-case
+       (progn ,@body)
+     (server-close-socket () (disconnect-socket ,socket))))
+
 (defun send-response (socket buffer)
   "Send a response to client"
   (let ((position 0))
     (flet ((send-handler (fd event error)
              (declare (ignore fd event))
-             (if (eql :timeout error)
-                 (server-error socket "socket ~a timed out" socket))
-             (incf position (send-to socket buffer
-                                     :start position))
-             (when (= position (length buffer))
-               (force-output socket)
-               (disconnect-socket socket))))
+             (with-close-socket-restart (socket)
+               (if (eql :timeout error)
+                   (server-error socket "socket ~a timed out" socket))
+               (incf position (send-to socket buffer
+                                       :start position))
+               (when (= position (length buffer))
+                 (force-output socket)
+                 (disconnect-socket socket)))))
       (set-io-handler *event-base*
                       (socket-os-fd socket)
                       :write #'send-handler
@@ -33,11 +39,6 @@
       (receive-from socket :buffer buffer :start start)
     (declare (ignore buffer))
     copied))
-
-(defmacro with-close-socket-restart ((socket) &body body)
-  `(restart-case
-       (progn ,@body)
-     (server-close-socket () (disconnect-socket ,socket))))
 
 (defun read-request (socket)
   "Read request from client and send response"
