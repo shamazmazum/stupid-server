@@ -182,7 +182,7 @@ STREAM and REQUEST. It must write to the stream content of html page"
 (defun set-uri-handler (uri handler &key (remove-old t))
   "Set URI handler possibly deleting the old one"
   (let ((dispatch-table
-         (if remove-old
+         (if (and (stringp uri) remove-old)
              (let ((entry (find uri *dispatch-table* :test #'com-funcall :key #'car)))
                (remove entry *dispatch-table*))
              *dispatch-table*)))
@@ -243,3 +243,33 @@ variable UA will be bound with client's UA and NAME with \"value\""
                                (cons `(declare (ignore ,request))
                                      body)))
                        :location ,location))))
+
+;; Must be really slow, but since there is no sendfile(2) in Common Lisp :-(
+(defun install-static-directory-handler (uri directory &key (charset "utf-8"))
+  "Make and insert to *DISPATCH-TABLE* handler for files in directory.
+Files in DIRECTORY will be available under their names prefixed with URI."
+  (let ((directory-pathname (probe-file directory)))
+    (if (or (not directory-pathname) (pathname-name directory-pathname))
+        (error "There is no such directory in file system"))
+    (set-uri-handler
+     (lambda (string)
+       (string= uri (subseq string 0 (length uri))))
+     (lambda (request)
+       (let ((filename (merge-pathnames (subseq (request-uri request)
+                                                (length uri))
+                                        directory-pathname)))
+         (handler-case
+             (let ((data (load-content filename))
+                   (response (make-response)))
+               (push
+                (cons "Content-Type"
+                      (let ((content-type (get-file-type filename)))
+                        (if (search "text" content-type)
+                            (construct-content-type (list content-type :charset charset))
+                            (construct-content-type (list content-type)))))
+                (response-headers response))
+               (setf (response-code response) *http-ok*)
+               (setf (response-data response) data)
+               response)
+           (file-error ()
+             (funcall (get-status-code-page-generator *http-not-found*) request))))))))
