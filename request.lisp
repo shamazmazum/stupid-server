@@ -1,7 +1,6 @@
 (in-package :stupid-server)
 
 (defstruct request
-  socket ; KLUDGE: for error handling
   (method  "" :type string)
   (uri     "" :type string)
   (version "" :type string)
@@ -44,10 +43,10 @@
             collect (destructuring-bind (name value) name-value
                       (cons name value)))))))
 
-(defun parse-request (string &key socket)
+(defun parse-request (string)
   "Parse HTTP request"
   (let ((request-strings (split-string string #\NewLine))
-        (request (make-request :socket socket)))
+        (request (make-request)))
 
     (let ((start (car request-strings)))
       (destructuring-bind (method uri version)
@@ -70,5 +69,4 @@
                (let ((position (position #\: header)))
                  (cons (subseq header 0 position)
                        (subseq header (+ position 2))))))
-
     request))

@@ -64,8 +64,7 @@
                                     (octets-to-string-latin-1
                                      (subseq buffer 0 (+ content-position 4))
                                      #+nil
-                                     buffer)
-                                    :socket socket)
+                                     buffer))
                            reading-headers nil)
                      (when (string= (request-method request) *method-post*)
                        (let ((length (assoc "Content-Length" (request-headers request)
