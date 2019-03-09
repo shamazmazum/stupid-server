@@ -15,7 +15,7 @@
 ;; Versions
 (defparameter *http/1.0* "HTTP/1.0") ; the only version supported
 
-(defvar *event-base*)
+(defvar *event-base* (make-instance 'event-base))
 (defvar *log-stream*)
 (defvar *server-thread* nil)
 (defvar *status-code-page-generators* (make-hash-table))

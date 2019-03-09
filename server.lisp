@@ -6,10 +6,7 @@
       ((warning #'(lambda (c) (declare (ignore c)) (invoke-restart 'muffle-warning))))
     (remove-fd-handlers *event-base*
                         (socket-os-fd socket)))
-  (handler-case
-      (close socket)
-    ;; Silently ignore RST
-    (isys:econnreset () ())))
+  (close socket))
 
 (defmacro with-close-socket-restart ((socket &optional fd) &body body)
   `(restart-case
@@ -50,7 +47,7 @@
                    (setq sending-stream nil)))
 
                (when (not (or sending-buffer sending-stream))
-                 (force-output socket)
+                 (finish-output socket)
                  (sb-posix:close file-fd)
                  (disconnect-socket socket)))))
 
@@ -164,8 +161,7 @@
                                         :type :stream
                                         :connect :passive
                                         :local-host #(127 0 0 1)
-                                        :local-port 8080))
-                 (*event-base* (make-instance 'event-base :exit-when-empty t)))
+                                        :local-port 8080)))
              #+nil
              (setf (iolib.streams:fd-non-blocking listener) t)
              (flet ((listener-handler (fd event error)
@@ -190,18 +186,16 @@
                      (lambda (c)
                        (log-error c)
                        (or (server-handle-error) (continue))))) ; If we can just continue, do it
-                 (loop
-                    while *server-thread*
-                    do
-                      (event-dispatch *event-base* :timeout 5)
-                    finally
-                      (disconnect-socket listener)
-                      (event-dispatch *event-base* :timeout 5)))))) ; Finish unfinished connections
+                 (event-dispatch *event-base*)
+                 (remove-fd-handlers *event-base*
+                                     (socket-os-fd listener))
+                 (close listener)))))
          :name "Event thread")))
 
 (defun stop-server ()
   "Stop server"
   (let ((thread *server-thread*))
     (when thread
-      (setq *server-thread* nil)
-      (join-thread thread))))
+      (exit-event-loop *event-base*)
+      (join-thread thread)
+      (setq *server-thread* nil))))
