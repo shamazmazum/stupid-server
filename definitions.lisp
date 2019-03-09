@@ -42,3 +42,6 @@
            :socket socket
            :format-control format-string
            :format-arguments format-arguments))
+
+(defparameter *newline-code* #(13 10))
+(defparameter *newline-string* (concatenate 'string '(#\Return #\LineFeed)))

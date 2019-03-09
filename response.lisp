@@ -26,34 +26,38 @@
   code
   headers
   data
-  cache)
+  buffer
+
+  file-length
+  file-pathname)
 
 (defun compose-response (response)
   "Translate response to simple-vector"
   (declare (optimize (speed 3)))
-  (if (response-cache response)
-      (return-from compose-response
-        (response-cache response)))
-  (let ((newline (coerce #(#\Return #\LineFeed) 'string))
-        (newline-code #(13 10)))
-    (declare (dynamic-extent newline newline-code))
-    (let ((response-list (list newline-code (response-data response))))
-      (dolist (header (response-headers response))
-        (push
-         (string-to-octets-latin-1
-          (format nil "~a: ~a~a"
-                  (car header) (cdr header)
-                  newline))
-         response-list))
-      (setf (response-cache response)
-            (apply #'concatenate 'vector
-                   (string-to-octets-latin-1
-                    (format nil "~a ~3,'0d ~a~a"
-                            (response-version response)
-                            (car (response-code response))
-                            (cdr (response-code response))
-                            newline))
-                   response-list)))))
+  (let (response-list)
+    (let ((data (response-data response)))
+      (when (or data (response-file-pathname response))
+        (push data response-list)
+        (push *newline-code* response-list)))
+    (dolist (header (response-headers response))
+      (push
+       (string-to-octets-latin-1
+        (format nil "~a: ~a~a"
+                (car header) (cdr header)
+                *newline-string*))
+       response-list))
+    (push
+     (string-to-octets-latin-1
+      (format nil "~a ~3,'0d ~a~a"
+              (response-version response)
+              (car (response-code response))
+              (cdr (response-code response))
+              *newline-string*))
+     response-list)
+    (setf (response-buffer response)
+          (apply #'concatenate 'vector
+                 response-list)))
+  response)
 
 ;; Some response generators
 
@@ -110,21 +114,25 @@
 
 (defun make-static-file-generator (filename &key (charset "utf-8"))
   "Static file handler (for example .html file / image on disk)"
-  (let ((content (load-content filename))
-        (response (make-response)))
-    (setf (response-data response) content
-          (response-code response) *http-ok*)
-    (push
-     (cons "Content-Type"
-           (let ((content-type (get-file-type filename)))
-             (if (search "text" content-type)
-                 (construct-content-type (list content-type :charset charset))
-                 (construct-content-type (list content-type)))))
-     (response-headers response))
-
-    (lambda (request)
-      (declare (ignore request))
-      response)))
+  (lambda (request)
+    (handler-case
+        (let ((response (make-response))
+              (pathname (truename filename)))
+          (push
+           (cons "Content-Type"
+                 (let ((content-type (get-file-type pathname)))
+                   (if (search "text" content-type)
+                       (construct-content-type (list content-type :charset charset))
+                       (construct-content-type (list content-type)))))
+           (response-headers response))
+          (setf (response-code response) *http-ok*
+                (response-file-pathname response) pathname
+                (response-file-length response)
+                (with-open-file (in pathname :element-type '(unsigned-byte 8))
+                  (file-length in)))
+          response)
+      (file-error ()
+        (funcall (get-status-code-page-generator *http-not-found*) request)))))
 
 (defun make-page-from-stream-generator (filler &key
                                                  (charset "utf-8")
@@ -171,12 +179,16 @@ STREAM and REQUEST. It must write to the stream content of html page"
              (get-status-code-page-generator *http-not-implemented*)))
           request)))
 
-    (when (not (response-cache response))
+    (let ((length 0))
       (if (response-data response)
-          (push (cons "Content-Length" (length (response-data response)))
-                (response-headers response)))
-      (push '("Connection" . "close") (response-headers response))
-      (setf (response-version response) (request-version request)))
+          (incf length (length (response-data response))))
+      (if (response-file-length response)
+          (incf length (response-file-length response)))
+      (if (not (zerop length))
+          (push (cons "Content-Length" length)
+                (response-headers response))))
+    (push '("Connection" . "close") (response-headers response))
+    (setf (response-version response) (request-version request))
     response))
 
 (defun set-uri-handler (uri handler &key (remove-old t))
@@ -253,23 +265,13 @@ Files in DIRECTORY will be available under their names prefixed with URI."
         (error "There is no such directory in file system"))
     (set-uri-handler
      (lambda (string)
-       (string= uri (subseq string 0 (length uri))))
+       (and (> (length string)
+               (length uri))
+            (string= uri (subseq string 0 (length uri)))))
      (lambda (request)
-       (let ((filename (merge-pathnames (subseq (request-uri request)
-                                                (length uri))
-                                        directory-pathname)))
-         (handler-case
-             (let ((data (load-content filename))
-                   (response (make-response)))
-               (push
-                (cons "Content-Type"
-                      (let ((content-type (get-file-type filename)))
-                        (if (search "text" content-type)
-                            (construct-content-type (list content-type :charset charset))
-                            (construct-content-type (list content-type)))))
-                (response-headers response))
-               (setf (response-code response) *http-ok*)
-               (setf (response-data response) data)
-               response)
-           (file-error ()
-             (funcall (get-status-code-page-generator *http-not-found*) request))))))))
+       (let ((filename
+              (merge-pathnames
+               (subseq (request-uri request)
+                       (length uri))
+               directory-pathname)))
+         (funcall (make-static-file-generator filename :charset charset) request))))))

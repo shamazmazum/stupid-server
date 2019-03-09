@@ -11,24 +11,49 @@
     ;; Silently ignore RST
     (isys:econnreset () ())))
 
-(defmacro with-close-socket-restart ((socket) &body body)
+(defmacro with-close-socket-restart ((socket &optional fd) &body body)
   `(restart-case
        (progn ,@body)
-     (server-close-socket () (disconnect-socket ,socket))))
+     (server-close-socket ()
+       (disconnect-socket ,socket)
+       (if ,fd (sb-posix:close ,fd)))))
 
-(defun send-response (socket buffer)
+(defun send-response (socket response)
   "Send a response to client"
-  (let ((position 0))
-    (flet ((send-handler (fd event error)
+  (let ((position 0)
+        (sending-buffer t)
+        (sending-stream nil)
+        (file-fd (if (response-file-pathname response)
+                     (sb-posix:open (response-file-pathname response)
+                                    sb-posix:o-rdonly))))
+    (labels ((send-handler (fd event error)
              (declare (ignore fd event))
-             (with-close-socket-restart (socket)
+             (with-close-socket-restart (socket file-fd)
                (if (eql :timeout error)
                    (server-error socket "socket ~a timed out" socket))
-               (incf position (send-to socket buffer
-                                       :start position))
-               (when (= position (length buffer))
+               (when sending-buffer
+                 (incf position (send-to socket (response-buffer response)
+                                         :start position))
+                 (when (= position (length (response-buffer response)))
+                   (setq sending-buffer nil)
+                   (when file-fd
+                     (setq sending-stream t
+                           position 0))))
+
+               (when sending-stream
+                 (incf position (isys::sendfile (socket-os-fd socket)
+                                                file-fd position
+                                                (-
+                                                 (response-file-length response)
+                                                 position)))
+                 (when (= position (response-file-length response))
+                   (setq sending-stream nil)))
+
+               (when (not (or sending-buffer sending-stream))
                  (force-output socket)
+                 (sb-posix:close file-fd)
                  (disconnect-socket socket)))))
+
       (set-io-handler *event-base*
                       (socket-os-fd socket)
                       :write #'send-handler
