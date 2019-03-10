@@ -8,29 +8,34 @@
                         (socket-os-fd socket)))
   (close socket))
 
-(defmacro with-close-socket-restart ((socket &optional fd) &body body)
+(defmacro with-cleanup ((socket &optional fd) &body body)
   `(restart-case
        (progn ,@body)
-     (server-close-socket ()
+     (server-cleanup ()
        (disconnect-socket ,socket)
        (if ,fd (sb-posix:close ,fd)))))
 
 (defun send-response (socket response)
   "Send a response to client"
+  (declare (optimize (speed 3))
+           (type socket socket)
+           (type response response))
   (let ((position 0)
         (sending-buffer t)
         (sending-stream nil)
         (file-fd (if (response-file-pathname response)
                      (sb-posix:open (response-file-pathname response)
                                     sb-posix:o-rdonly))))
+    (declare (type non-negative-fixnum position))
     (labels ((send-handler (fd event error)
              (declare (ignore fd event))
-             (with-close-socket-restart (socket file-fd)
+             (with-cleanup (socket file-fd)
                (if (eql :timeout error)
                    (server-error socket "socket ~a timed out" socket))
                (when sending-buffer
-                 (incf position (send-to socket (response-buffer response)
-                                         :start position))
+                 (incf position (the fixnum
+                                     (send-to socket (response-buffer response)
+                                              :start position)))
                  (when (= position (length (response-buffer response)))
                    (setq sending-buffer nil)
                    (when file-fd
@@ -64,8 +69,7 @@
 
 (defun read-request (socket)
   "Read request from client and send response"
-  (let ((buffer (make-array 4096
-                            :initial-element 0))
+  (let ((buffer (make-array 4096 :initial-element 0))
         (position 0)
         (content-start 0)
         (content-length 0)
@@ -74,7 +78,7 @@
         request)
     (flet ((request-handler (fd event error)
              (declare (ignore fd event))
-             (with-close-socket-restart (socket)
+             (with-cleanup (socket)
                (if (eql error :timeout)
                    (server-error socket "socket ~a timed out" socket))
 
@@ -145,8 +149,8 @@
     (terpri *log-stream*)))
 
 (defun server-handle-error ()
-  (if (find-restart 'server-close-socket)
-      (invoke-restart 'server-close-socket))
+  (if (find-restart 'server-cleanup)
+      (invoke-restart 'server-cleanup))
   (if (find-restart 'server-continue)
       (invoke-restart 'server-continue)))
 

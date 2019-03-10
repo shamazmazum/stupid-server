@@ -26,9 +26,9 @@
   code
   headers
   data
-  buffer
+  (buffer #() :type simple-vector)
 
-  file-length
+  (file-length 0 :type non-negative-fixnum)
   file-pathname)
 
 (defun compose-response (response)

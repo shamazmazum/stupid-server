@@ -1,5 +1,7 @@
 (in-package :stupid-server)
 
+(deftype non-negative-fixnum () '(integer 0 #.most-positive-fixnum))
+
 ;; Methods
 (defparameter *method-get* "GET")
 (defparameter *method-post* "POST")
