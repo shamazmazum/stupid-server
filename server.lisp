@@ -53,7 +53,7 @@
 
                (when (not (or sending-buffer sending-stream))
                  (finish-output socket)
-                 (sb-posix:close file-fd)
+                 (if file-fd (sb-posix:close file-fd))
                  (disconnect-socket socket)))))
 
       (set-io-handler *event-base*
@@ -184,9 +184,7 @@
                        (log-error c)
                        (server-handle-error))))
                  (event-dispatch *event-base*)
-                 (remove-fd-handlers *event-base*
-                                     (socket-os-fd listener))
-                 (close listener)))))
+                 (disconnect-socket listener)))))
          :name "Event thread")))
 
 (defun stop-server ()
