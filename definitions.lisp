@@ -11,6 +11,7 @@
 (defparameter *http-ok* '(200 . "OK"))
 (defparameter *http-not-found* '(404 . "Not Found"))
 (defparameter *http-found* '(302 . "Found"))
+(defparameter *http-server-error* '(500 . "Internal Server Error"))
 (defparameter *http-not-implemented* '(501 . "Not Implemented"))
 (defparameter *http-not-modified* '(304 . "Not Modified"))
 

@@ -88,9 +88,7 @@
                    (when content-position
                      (setq request (parse-request
                                     (octets-to-string-latin-1
-                                     (subseq buffer 0 (+ content-position 4))
-                                     #+nil
-                                     buffer))
+                                     (subseq buffer 0 (+ content-position 4))))
                            reading-headers nil)
                      (when (string= (request-method request) *method-post*)
                        (let ((length (assoc "Content-Length" (request-headers request)
@@ -107,10 +105,9 @@
                     (setf (request-content request)
                           (subseq buffer content-start position)
                           reading-content nil))
-                   (t (incf position (socket-receive socket buffer :start position)))))
+                   (t (incf position (socket-receive socket buffer :start position))))))
 
-               (when (not
-                      (or reading-headers reading-content))
+               (when (not (or reading-headers reading-content))
                  (remove-fd-handlers *event-base*
                                      (socket-os-fd socket))
                  (if *log-stream*
@@ -133,7 +130,7 @@
                  (send-response
                   socket
                   (compose-response
-                   (process-request request)))))))
+                   (process-request request))))))
 
       (set-io-handler *event-base*
                       (socket-os-fd socket)
@@ -149,10 +146,10 @@
     (terpri *log-stream*)))
 
 (defun server-handle-error ()
+  (if (find-restart 'server-send-error)
+      (invoke-restart 'server-send-error))
   (if (find-restart 'server-cleanup)
-      (invoke-restart 'server-cleanup))
-  (if (find-restart 'server-continue)
-      (invoke-restart 'server-continue)))
+      (invoke-restart 'server-cleanup)))
 
 (defun run-server (&optional log-stream)
   "Run server. LOG-STREAM may be optional character output stream where log is stored"
@@ -166,8 +163,6 @@
                                         :connect :passive
                                         :local-host #(127 0 0 1)
                                         :local-port 8080)))
-             #+nil
-             (setf (iolib.streams:fd-non-blocking listener) t)
              (flet ((listener-handler (fd event error)
                       (declare (ignore fd event))
                       (block nil
@@ -177,8 +172,6 @@
                           (when client
                             (if *log-stream*
                                 (format *log-stream* "Accepted connection ~a~%" client))
-                            #+nil
-                            (setf (iolib.streams:fd-non-blocking client) t)
                             (read-request client))))))
                (set-io-handler *event-base*
                                (socket-os-fd listener)
@@ -189,7 +182,7 @@
                    ((error
                      (lambda (c)
                        (log-error c)
-                       (or (server-handle-error) (continue))))) ; If we can just continue, do it
+                       (server-handle-error))))
                  (event-dispatch *event-base*)
                  (remove-fd-handlers *event-base*
                                      (socket-os-fd listener))

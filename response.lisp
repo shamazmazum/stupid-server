@@ -166,18 +166,21 @@ STREAM and REQUEST. It must write to the stream content of html page"
 (defun process-request (request)
   "Generate a response accepting a REQUEST"
   (let ((response
-         (funcall
-          (cond
-            ((or
-              (string= *method-get* (request-method request))
-              (string= *method-post* (request-method request))) ;We can understand only this now
-             (let ((generator (find (request-uri request) *dispatch-table*
-                                    :test #'com-funcall :key #'car)))
-               (if generator (cdr generator)
-                   (get-status-code-page-generator *http-not-found*))))
-            (t
-             (get-status-code-page-generator *http-not-implemented*)))
-          request)))
+         (restart-case
+             (funcall
+              (cond
+                ((or
+                  (string= *method-get* (request-method request))
+                  (string= *method-post* (request-method request))) ;We can understand only this now
+                 (let ((generator (find (request-uri request) *dispatch-table*
+                                        :test #'com-funcall :key #'car)))
+                   (if generator (cdr generator)
+                       (get-status-code-page-generator *http-not-found*))))
+                (t
+                 (get-status-code-page-generator *http-not-implemented*)))
+              request)
+           (server-send-error ()
+             (funcall (get-status-code-page-generator *http-server-error*) request)))))
 
     (let ((length 0))
       (if (response-data response)
