@@ -62,17 +62,20 @@
                       :timeout 10))))
 
 (defun socket-receive (socket buffer &key start)
-  (multiple-value-bind (buffer copied)
-      (receive-from socket :buffer buffer :start start)
-    (declare (ignore buffer))
-    copied))
+  (nth-value 1 (receive-from socket :buffer buffer :start start)))
+
+(defun log-request (request)
+  (if *log-stream*
+      (let ((ua (assoc "User-Agent" (request-headers request)
+                       :test #'string=)))
+        (format *log-stream* "Requested ~a by ~a~%"
+                (request-uri request) (if ua (cdr ua) "(Unknown client)")))))
 
 (defun read-request (socket)
   "Read request from client and send response"
   (let ((buffer (make-array 4096 :initial-element 0))
         (position 0)
         (content-start 0)
-        (content-length 0)
         (reading-headers t)
         (reading-content nil)
         request)
@@ -90,42 +93,27 @@
                                     (octets-to-string-latin-1
                                      (subseq buffer 0 (+ content-position 4))))
                            reading-headers nil)
-                     (when (string= (request-method request) *method-post*)
-                       (let ((length (assoc "Content-Length" (request-headers request)
-                                            :test #'string=)))
-                         (if (not length)
+
+                     (if (zerop (request-content-length request))
+                         (if (string= (request-method request) *method-post*)
                              (server-error socket "No Content-Length"))
                          (setq reading-content t
-                               content-length (parse-integer (cdr length))
-                               content-start (+ 4 content-position)))))))
+                               content-start (+ 4 content-position))))))
 
                (when reading-content
-                 (cond
-                   ((= position (+ content-start content-length))
-                    (setf (request-content request)
-                          (subseq buffer content-start position)
-                          reading-content nil))
-                   (t (incf position (socket-receive socket buffer :start position))))))
+                 (if (= position (+ content-start (request-content-length request)))
+                     (setf (request-content request)
+                           (subseq buffer content-start position)
+                           reading-content nil)
+                     (incf position (socket-receive socket buffer :start position)))))
 
                (when (not (or reading-headers reading-content))
                  (remove-fd-handlers *event-base*
                                      (socket-os-fd socket))
-                 (if *log-stream*
-                     (format *log-stream* "Requested ~a by '~a'~%"
-                             (request-uri request)
-                             (let ((ua (assoc "User-Agent" (request-headers request)
-                                              :test #'string=)))
-                               (if ua (cdr ua)))))
-                 (if (and
-                      (request-content request)
-                      (let ((content-type (assoc "Content-Type" (request-headers request)
-                                                 :test #'string=)))
-                        (if content-type
-                            (string= "application/x-www-form-urlencoded"
-                                     (first (parse-content-type (cdr content-type)))))))
-                     (setf (request-parameters request)
-                           (parse-post-parameters
-                            (octets-to-string-latin-1 (request-content request)))))
+
+                 (log-request request)
+                 ;; FIXME: This call is unprotected
+                 (parse-request-content request)
 
                  (send-response
                   socket

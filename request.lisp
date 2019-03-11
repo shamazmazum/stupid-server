@@ -4,6 +4,7 @@
   (method  "" :type string)
   (uri     "" :type string)
   (version "" :type string)
+  (content-length 0 :type non-negative-fixnum)
   headers
   parameters
   content)
@@ -69,4 +70,22 @@
                (let ((position (position #\: header)))
                  (cons (subseq header 0 position)
                        (subseq header (+ position 2))))))
+
+    (let ((content-length (assoc "Content-Length"
+                                 (request-headers request)
+                                 :test #'string=)))
+      (if content-length
+          (setf (request-content-length request)
+                (parse-integer (cdr content-length)))))
     request))
+
+(defun parse-request-content (request)
+  (let ((content-type (assoc "Content-Type" (request-headers request)
+                             :test #'string=)))
+    (if (and content-type (request-content request))
+        ;; Content contains URL-encoded POST parameters
+        (if (string= "application/x-www-form-urlencoded"
+                     (first (parse-content-type (cdr content-type))))
+            (setf (request-parameters request)
+                  (parse-post-parameters
+                   (octets-to-string-latin-1 (request-content request))))))))
