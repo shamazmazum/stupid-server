@@ -97,20 +97,7 @@
 (defun get-file-type (filename)
   "MIME types for different file extensions"
   (let ((type (pathname-type filename)))
-    (cond
-      ((or (string= type "htm")
-           (string= type "html"))
-       "text/html")
-      ((or (string= type "jpg")
-           (string= type "jpeg"))
-       "image/jpeg")
-      ((string= type "png")
-       "image/png")
-      ((string= type "txt")
-       "text/plain")
-      ((string= type "pdf")
-       "application/pdf")
-      (t "application/octet-stream"))))
+    (gethash type *mime-types* "application/octet-stream")))
 
 (defun make-static-file-generator (filename &key (charset "utf-8"))
   "Static file handler (for example .html file / image on disk)"

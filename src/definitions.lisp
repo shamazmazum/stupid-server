@@ -24,6 +24,20 @@
 (defvar *status-code-page-generators* (make-hash-table))
 (defvar *dispatch-table* nil
   "Server URI-handler dispatch table")
+(defvar *mime-types* (make-hash-table :test #'equal)
+  "Hash table for known MIME types")
+
+(progn
+  (setf (gethash "htm" *mime-types*) "text/html")
+  (setf (gethash "html" *mime-types*) "text/html")
+  (setf (gethash "jpg" *mime-types*) "image/jpeg")
+  (setf (gethash "jpeg" *mime-types*) "image/jpeg")
+  (setf (gethash "png" *mime-types*) "image/png")
+  (setf (gethash "txt" *mime-types*) "text/plain")
+  (setf (gethash "pdf" *mime-types*) "application/pdf")
+  (setf (gethash "ico" *mime-types*) "image/x-icon")
+  (setf (gethash "js" *mime-types*) "application/javascript")
+  (setf (gethash "css" *mime-types*) "text/css"))
 
 (define-condition stupid-server::server-error (simple-error)
   ((socket :initarg :socket

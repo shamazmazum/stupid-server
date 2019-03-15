@@ -4,6 +4,7 @@
   (:export #:run-server
            #:stop-server
            #:*dispatch-table*
+           #:*mime-types*
            #:set-uri-handler
            #:make-static-file-generator
            #:make-page-from-stream-generator
