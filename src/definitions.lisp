@@ -37,6 +37,7 @@
   (setf (gethash "pdf" *mime-types*) "application/pdf")
   (setf (gethash "ico" *mime-types*) "image/x-icon")
   (setf (gethash "js" *mime-types*) "application/javascript")
+  (setf (gethash "svg" *mime-types*) "image/svg+xml")
   (setf (gethash "css" *mime-types*) "text/css"))
 
 (define-condition stupid-server::server-error (simple-error)
