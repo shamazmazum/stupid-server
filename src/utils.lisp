@@ -15,6 +15,21 @@
       (read-sequence buffer in)
       buffer)))
 
+#+nil
+(defun split-string (string &optional (split-char #\Space))
+  "Split STRING into list of strings. SPLIT-CHAR is the delimiter and
+defaults to #\Space"
+  (declare (optimize (speed 3))
+           (type string string)
+           (type character split-char))
+  (loop
+     with old-pos = 0
+     for pos = (position split-char string :test #'char= :start old-pos)
+     collect (subseq string old-pos pos) into res
+     while pos
+     do (setq old-pos (1+ pos))
+     finally (return res)))
+
 (defun split-string (string &optional (split-char #\Space) result end)
   "Split STRING into list of strings. SPLIT-CHAR is the delimiter and
 defaults to #\Space"
@@ -29,36 +44,26 @@ defaults to #\Space"
                       position)
         (push (subseq string 0 end) result))))
 
-;; Ugly and sometimes slow
 (defun url-decode (string)
-  "Decode URL(percent)-encoded string"
-  (let ((start 0)
-        result)
-    (setq string (substitute #\Space #\+ string))
-    (block nil
-      (tagbody :loop
-         (let ((position (position #\% string :start start)))
-           (cond
-             (position
-              (setq result (cons (subseq string start position) result)
-                    start position))
-             (t (return
-                  (apply #'concatenate 'string
-                         (reverse (cons (subseq string start) result)))))))
-         (let ((encoded
-                (loop
-                   while (and
-                          (/= start (length string))
-                          (char= #\% (char string start)))
-                   for code = (parse-integer
-                               (subseq string (+ start 1) (+ start 3))
-                               :radix 16)
-                   do (incf start 3)
-                   collect code)))
-           (push (flexi-streams:octets-to-string encoded
-                                                 :external-format '(:utf-8))
-                 result))
-         (go :loop)))))
+  (declare (optimize (speed 3))
+           (type string string))
+  (apply
+   #'concatenate 'string
+   (loop
+      with old-pos = 0
+      for pos = (position #\% string :start old-pos)
+      collect (subseq string old-pos pos) into res
+      if pos collect
+        (flexi-streams:octets-to-string
+         (loop
+            while (and (< pos (length string)) (char= #\% (char string pos)))
+            collect (parse-integer (subseq string (1+ pos) (+ pos 3)) :radix 16)
+            do (incf pos 3))
+         :external-format '(:utf-8))
+      into res
+      while pos
+      do (setq old-pos pos)
+      finally (return res))))
 
 (defun octets-to-string-latin-1 (buffer)
   "Fast function to translate simple-vector of char codes to string"

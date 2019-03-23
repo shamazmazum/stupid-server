@@ -3,6 +3,7 @@
 (deftype non-negative-fixnum () '(integer 0 #.most-positive-fixnum))
 
 ;; Methods
+(declaim (type string *method-get* *method-post* *method-head*))
 (defparameter *method-get* "GET")
 (defparameter *method-post* "POST")
 (defparameter *method-head* "HEAD")

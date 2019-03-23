@@ -46,6 +46,8 @@
 
 (defun parse-request (string)
   "Parse HTTP request"
+  (declare (optimize (speed 3))
+           (type simple-string string))
   (let ((request-strings (split-string string #\NewLine))
         (request (make-request)))
 
@@ -65,7 +67,7 @@
     (setf (request-headers request)
           (loop
              for header in (cdr request-strings)
-             until (string= "" header)
+             until (string= "" (the string header))
              collect
                (let ((position (position #\: header)))
                  (cons (subseq header 0 position)
@@ -80,12 +82,14 @@
     request))
 
 (defun parse-request-content (request)
+  (declare (optimize (speed 3)))
   (let ((content-type (assoc "Content-Type" (request-headers request)
                              :test #'string=)))
     (if (and content-type (request-content request))
         ;; Content contains URL-encoded POST parameters
         (if (string= "application/x-www-form-urlencoded"
-                     (first (parse-content-type (cdr content-type))))
+                     (the string (first (parse-content-type (cdr content-type)))))
             (setf (request-parameters request)
                   (parse-post-parameters
-                   (octets-to-string-latin-1 (request-content request))))))))
+                   (octets-to-string-latin-1 (request-content request)))))))
+  request)
