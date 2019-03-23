@@ -8,13 +8,6 @@
                        :external-format '(:utf-8 :eol-style :crlf))))
          ,@body))))
 
-(defun load-content (filename)
-  "Returns simple-vector with content of a file"
-  (with-open-file (in filename :element-type '(unsigned-byte 8))
-    (let ((buffer (make-array (file-length in))))
-      (read-sequence buffer in)
-      buffer)))
-
 #+nil
 (defun split-string (string &optional (split-char #\Space))
   "Split STRING into list of strings. SPLIT-CHAR is the delimiter and
